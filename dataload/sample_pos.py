@@ -14,7 +14,9 @@ def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('-o', '--output', default='data/patches1/',
                         type=str, help='images')
+    parser.add_argument('-s', '--size', default='512', type=int, help='size of patch')
     return parser.parse_args()
+
 
 def otsu (img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -30,7 +32,7 @@ def scan_pos(dataset, args):
     np.random.shuffle(slides_id)
     
     total = len(slides_id)
-    dh, dw = 5120, 5120
+    dh, dw = args.size, args.size
 
     coco_train = COCODataset()
     coco_valid = COCODataset()
@@ -69,7 +71,7 @@ def scan_pos(dataset, args):
                 for sx in range(x, x + w, dw//2):
                     for sy in range(y, y + h, dh//2):
                         filename = '{}_({}-{}-{}-{})_{}.jpg'.format(
-                                slide_id, sx, sy, dw, dh, item['class'])
+                                slide_id, sx, sy, dw, dh, 'pos')
                         slide_w, slide_h = dataset.get_shape(slide_id)
 
                         # print(slide_w, slide_h, sx, sy, sx+dw, sy+dh)
@@ -99,9 +101,9 @@ def scan_pos(dataset, args):
                                     [ix-sx, iy-sy, jx-ix, jy-iy],
                                     coco.images_id, category_id)
                                 marked = True
-                                print("Add annotation in {}".format(coco.images_id))
+                                # print("Add annotation in {}".format(coco.images_id))
                         if marked:
-                            print('  display {}'.format(filename))
+                            # print('  display {}'.format(filename))
                             # dst = cv2.resize(dst, (dst.shape[1] >> 2, dst.shape[0] >> 2))
                             # cv2.imshow('img', dst)
                             # cv2.waitKey(0)
@@ -110,7 +112,6 @@ def scan_pos(dataset, args):
                             height, width = img.shape[:2]
                             print(colorful_str.log('[{}]\timg saved in {}'.format(coco.images_id, path)))
                             _ = coco.add_image(path, height, width, absolute_path=True)
-
 
     dirname = os.path.join(args.output, 'annotations')
     if not os.path.isdir(dirname):
@@ -123,12 +124,11 @@ def scan_pos(dataset, args):
 
 def main():
     args = get_args()
-    pos_path = '/home/gryhomshaw/ssd1g/xiaoguohong/classification/data/tianchi/pos'
-    neg_path = '/home/gryhomshaw/ssd1g/xiaoguohong/classification/data/tianchi/neg'
-    label_path = '/home/gryhomshaw/ssd1g/xiaoguohong/classification/data/tianchi/labels'
+    # pos_path = '/home/gryhomshaw/ssd1g/xiaoguohong/classification/data/tianchi/pos'
+    # label_path = '/home/gryhomshaw/ssd1g/xiaoguohong/classification/data/tianchi/labels'
+    pos_path = '/home/gryhomshaw/ssd1g/xiaoguohong/Attention-based-MIL/demo/pos'
+    label_path = '/home/gryhomshaw/ssd1g/xiaoguohong/Attention-based-MIL/demo/labels'
     pos_dataset = dataset.Dataset(pos_path, label_path)
-    # neg_dataset = dataset.Dataset(neg_path)
-
     scan_pos(pos_dataset, args)
 
 

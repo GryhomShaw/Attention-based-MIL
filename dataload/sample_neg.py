@@ -63,8 +63,8 @@ def sample_neg(dataset, args):
             #if np.sum(otsu_mask) // 255 < 0.5 * img.shape[0] * img.shape[1]:
             #    continue
             cnt += 1
-            img_name = '{}_({},{},{},{}).jpg'.format(
-                slide_id, x, y, x + args.shape, y + args.shape)
+            img_name = '{}_({}-{}-{}-{})_{}.jpg'.format(
+                slide_id, x, y, x + args.shape, y + args.shape, 'neg')
 
             img_path = os.path.join(dir_name, 'images', slide_id, img_name)
             # print("\t display {}".format(img_name))
@@ -89,12 +89,10 @@ def otsu (img):
     mask = 255 - th
     return mask
 
+
 def main():
     args = get_args()
-    pos_path = '/home/gryhomshaw/ssd1g/xiaoguohong/classification/data/tianchi/pos/'
-    neg_path = '/home/gryhomshaw/ssd1g/xiaoguohong/classification/data/tianchi/neg/'
-    label_path = '/home/gryhomshaw/ssd1g/xiaoguohong/classification/data/tianchi/labels'
-
+    neg_path = '/home/gryhomshaw/ssd1g/xiaoguohong/Attention-based-MIL/demo/neg'
     neg_dataset = dataset.Dataset(neg_path)
 
     sample_neg(neg_dataset, args)

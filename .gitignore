@@ -7,3 +7,5 @@ train_output/
 2560*
 utils/
 __pycache__/
+demo*
+*bags/

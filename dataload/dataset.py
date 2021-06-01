@@ -4,7 +4,7 @@ import json
 import os
 
 from eic_utils import procedure
-from .kfbreader import kfbReader
+from kfbreader import kfbReader
 
 slides_extensions = ['kfb']
 labels_extensions = ['json']
