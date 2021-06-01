@@ -1,0 +1,9 @@
+badcase/
+ckpt/
+heatmap/
+data/
+train_output/
+*.sh
+2560*
+utils/
+__pycache__/
