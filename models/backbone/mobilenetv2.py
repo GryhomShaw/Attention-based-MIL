@@ -1,3 +1,4 @@
+import torch
 from torch import nn
 from torch import Tensor
 from typing import Callable, Any, Optional, List
@@ -109,7 +110,8 @@ class MobileNetV2(nn.Module):
         inverted_residual_setting: Optional[List[List[int]]] = None,
         round_nearest: int = 8,
         block: Optional[Callable[..., nn.Module]] = None,
-        norm_layer: Optional[Callable[..., nn.Module]] = None
+        norm_layer: Optional[Callable[..., nn.Module]] = None,
+        split_index_list: Optional[List[int]] = None
     ) -> None:
         """
         MobileNet V2 main class
@@ -123,7 +125,8 @@ class MobileNetV2(nn.Module):
             norm_layer: Module specifying the normalization layer to use
         """
         super(MobileNetV2, self).__init__()
-
+        self.split_index_list = split_index_list
+        self.split_len = 0 if split_index_list is None else len(self.split_index_list) + 1
         if block is None:
             block = InvertedResidual
 
@@ -164,7 +167,15 @@ class MobileNetV2(nn.Module):
         # building last several layers
         features.append(ConvBNReLU(input_channel, self.last_channel, kernel_size=1, norm_layer=norm_layer))
         # make it nn.Sequential
-        self.features = nn.Sequential(*features)
+        if self.split_index_list is None:
+            self.features = nn.Sequential(*features)
+        else:
+            self.features = nn.ModuleList()
+            start_idx = 0
+            for each_idx in self.split_index_list:  # Split the model according to index
+                self.features.append(nn.Sequential(*features[start_idx:each_idx]))
+                start_idx = each_idx
+            self.features.append(nn.Sequential(*features[start_idx:]))
 
         # building classifier
         self.classifier = nn.Sequential(
@@ -194,16 +205,42 @@ class MobileNetV2(nn.Module):
         # x = self.classifier(x)
         return x
 
-    def forward(self, x: Tensor) -> Tensor:
-        return self._forward_impl(x)
+    def _per_epoch(self, cache, features, input=None):
+        for each_device in range(self.split_len - 1, -1, -1):
+            cur_x = cache[each_device]
+            if cur_x is not None:
+                next_x = self.features[each_device](cur_x).to(torch.device("cuda:{}".format(each_device + 1)))
+                if each_device == self.split_len - 1:
+                    features.append(nn.functional.adaptive_avg_pool2d(next_x, (1, 1)).reshape(next_x.shape[0], -1))
+                else:
+                    cache[each_device + 1] = next_x
+                cache[each_device] = None if each_device != 0 else input
+
+    def _forward_mp(self, x: Tensor, split_size = 100) -> Tensor:
+        splits = iter(x.split(split_size, dim=0))
+        cache = [None for _ in range(self.split_len)]  # Store the value to be calculated for the current device
+        cache[0] = next(splits)
+        features = []
+        for each_split in splits:
+            self._per_epoch(cache, features, each_split)
+        for _ in range(self.split_len):  # Empty the remaining part of the pipeline
+            self._per_epoch(cache, features, None)
+        return torch.cat(features)
+
+    def forward(self, x: Tensor, split_size=100) -> Tensor:
+        if self.split_index_list is None:
+            return self._forward_impl(x)
+        else:
+            return self._forward_mp(x, split_size)
     
-    def relocate(self, model_parallel=False, branch_index=6):
-        if model_parallel:  # cuda is available and numder of devices at least 2
-            self.features[:branch_index].to(troch.device("cuda:0"))
-            self.features[branch_index:].to(torch.device("cuda:1"))
-
-
-            
+    def relocate(self):
+        if self.split_index_list is not None:  # model parallel
+            assert torch.cuda.device_count() == self.split_len+1, print("The number of equipment cannot meet the model parallelism")
+            for each in range(self.split_len):
+                cur_device_name = "cuda:{}".format(each)
+                self.features[each].to(torch.device(cur_device_name))
+        else:
+            self.features.to(torch.device("cuda:0"))  # Currently unable to support data parallelism
 
 
 def mobilenet_v2(pretrained: bool = False, progress: bool = True, **kwargs: Any) -> MobileNetV2:
@@ -218,5 +255,14 @@ def mobilenet_v2(pretrained: bool = False, progress: bool = True, **kwargs: Any)
     if pretrained:
         state_dict = load_state_dict_from_url(model_urls['mobilenet_v2'],
                                               progress=progress)
+        if model.split_index_list:
+            index_list = [0, *model.split_index_list]
+            for k in model.state_dict().keys():
+                if 'features' in k:
+                    name1, idx1, idx2, *rest = k.split('.')
+                    new_idx = index_list[int(idx1)] + int(idx2)
+                    old_key = '.'.join([name1, str(new_idx), *rest])
+                    state_dict[k] = state_dict.pop(old_key)
         model.load_state_dict(state_dict)
+
     return model

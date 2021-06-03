@@ -27,8 +27,13 @@ def get_args():
     parser.add_argument('--lr', '-l', type=float, default=0.001, help="learning rate")
     parser.add_argument('--checkpoint', '-ckpt', type=str, default=None, help="path of checkpoint")
     parser.add_argument("--epoch", "-ep", type=int, default=500, help="max epoch")
-    parser.add_argument("--instance_eval", '-inst_eval', action='store_true', default=False, help="use instance constraint")
-    parser.add_argument("--instance_weight", '-inst_weight', type=float, default=0.3, help="the weight of instance constraint in Loss fn")
+    parser.add_argument("--instance_eval_bilateral", '-inst_eval_bil', action='store_true', default=False,
+                        help="use bilateral instance  constraint")
+    parser.add_argument("--instance_eval_unilateral", '-inst_eval_unil', action='store_true', default=False,
+                        help="use unilateral instance constraint ")
+    parser.add_argument("--instance_weight", '-inst_weight', type=float, default=0.3,
+                        help="the weight of instance constraint in Loss fn")
+    parser.add_argument('--split_index_list', '-sil', type=int, nargs='+', default=None, help="Model split index")
     parser.add_argument("--k_sample", '-k', type=int, default=3, help="sample num")
     args = parser.parse_args()
     return args
@@ -36,19 +41,22 @@ def get_args():
 
 def train():
     args = get_args()
-    # print(args.gpus, args.input)
+
     os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(args.gpus)
 
+    assert not (args.instance_eval_bilateral and args.instance_eval_unilateral), print(
+        "The two options must be mutually exclusive")
+    instance_eval = args.instance_eval_bilateral or args.instance_eval_unilateral
     with procedure("Init Model") as p:
         # model = ABMIL('resnet101', 2048).cuda()
 
         # model = ABMIL('mobilenetv2_10', 1280).cuda()
         # model = ModelParallelABMILLight(fc_input_dims=1280, num_classes=2, width_mult=0.5)
-        if args.instance_eval:
-            model = ABMIL(encoder_name='mobilenetv2_10', instance_loss_fn=nn.CrossEntropyLoss(), k_sample=args.k_sample)
-        else:
-            model = ABMIL(encoder_name='mobilenetv2_10', k_sample=args.k_sample)
-        model.relocate(model_parallel=False)
+
+        model = ABMIL(encoder_name='mobilenetv2', split_index_list=args.split_index_list, pretrained=True,
+                      instance_loss_fn=nn.CrossEntropyLoss() if instance_eval else None, k_sample=args.k_sample)
+
+        model.relocate()
 
     if args.checkpoint is not None:
         with procedure("Load param") as p:
@@ -60,7 +68,7 @@ def train():
             model.load_state_dict(state_dict)
 
     with procedure("Init Loss and optimizer") as p:
-        for k, v in model.named_parameters():
+        for k, v in model.named_parameters():  # Turn off the bn layer
             if 'bn' in k:
                 v.requires_grad = False
         ceriterion = torch.nn.CrossEntropyLoss()
@@ -118,6 +126,7 @@ def train():
         bag_loss_meter.reset()
         instance_loss_meter.reset()
         model.train()
+
         for name, m in model.named_modules():
             if isinstance(m, nn.BatchNorm2d):
                 m.eval()
@@ -125,20 +134,20 @@ def train():
         for each_iter, (imgs, labels, name) in enumerate(train_loader):
             input = imgs.squeeze().to("cuda:0")
             optimizer.zero_grad()
-            output, y_hat, y_prob, instance_results, weights = model(input, label=labels)
+            output, y_hat, y_prob, instance_results, weights = model(input, label=labels,
+                                                                     instance_eval_bilateral=args.instance_eval_bilateral,
+                                                                     instance_eval_unilateral=args.instance_eval_unilateral)
             target = labels.to(output.device)
-            # if each_iter == 0:
-            #     print("train", output)
-            # print(output.size(), output2.size(), target.size())\
-            # print("train", name, output, target)
-            if args.instance_eval:
+
+            if instance_eval:
                 bag_loss = ceriterion(output, target)
                 loss = (1 - args.instance_weight) * instance_results["instance_loss"] + args.instance_weight * bag_loss
                 bag_loss_meter.add(bag_loss.item())
                 instance_loss_meter.add(instance_results['instance_loss'].item())
                 loss_meter.add(loss.item())
                 writer.add_scalar('Train/iter_loss', loss.item(), epoch * len(train_loader) + each_iter)
-                writer.add_scalar('Train/instance_loss', instance_results["instance_loss"].item(), epoch * len(train_loader) + each_iter)
+                writer.add_scalar('Train/instance_loss', instance_results["instance_loss"].item(),
+                                  epoch * len(train_loader) + each_iter)
                 writer.add_scalar('Train/bag_loss', bag_loss.item(), epoch * len(train_loader) + each_iter)
             else:
 
@@ -156,9 +165,12 @@ def train():
         writer.add_scalar('Train/epoch_loss', epoch_loss, epoch)
         log_out("[Train] Epoch:{}\tLoss:{}\tlr:{}".format(epoch + 1, epoch_loss, optimizer.param_groups[0]['lr']),
                 log_handle)
-        val_loss, val_acc, val_rec, val_cm = val(model, val_loader, ceriterion, writer, epoch, args.instance_eval, args.instance_weight)
+        val_loss, val_acc, val_rec, val_cm = val(model, val_loader, ceriterion, writer, epoch,
+                                                 args.instance_eval_bilateral, args.instance_eval_unilateral,
+                                                 args.instance_weight)
 
-        log_out("[Val] Epoch:{}\t val_loss:{}\tval_acc:{} \t val_rec:{}\t val_cm:{}".format(epoch+1, val_loss, val_acc, val_rec, val_cm), log_handle)
+        log_out("[Val] Epoch:{}\t val_loss:{}\tval_acc:{} \t val_rec:{}\t val_cm:{}".format(epoch + 1, val_loss, val_acc,
+                                                                                        val_rec, val_cm), log_handle)
 
         writer.add_scalar('Val/val_acc', val_acc, epoch)
         writer.add_scalar('Val/val_rec', val_rec, epoch)
@@ -197,7 +209,7 @@ def train():
     log_handle.close()
 
 
-def val(model, val_loader, ceriterion, writer, epoch, instance_eval, instance_weight):
+def val(model, val_loader, ceriterion, writer, epoch, instance_eval_bilateral, instance_eval_unilateral, instance_weight):
     model.eval()
     loss_val_meter = meter.AverageValueMeter()
     cm = meter.ConfusionMeter(2)
@@ -206,15 +218,15 @@ def val(model, val_loader, ceriterion, writer, epoch, instance_eval, instance_we
         for each_iter, (imgs, labels, name) in enumerate(val_loader):
             input = imgs.squeeze().to("cuda:0")
 
-            output, y_hat, y_prob, instance_results, weights = model(input, label=labels)
+            output, y_hat, y_prob, instance_results, weights = model(input, label=labels,
+                                                                     instance_eval_bilateral=instance_eval_bilateral,
+                                                                     instance_eval_unilateral=instance_eval_unilateral)
             target = labels.to(output.device)
-
-            if instance_eval:
+            if instance_eval_bilateral or instance_eval_unilateral:
                 loss = (1 - instance_weight) * instance_results[
                     "instance_loss"] + instance_weight * ceriterion(output, target)
             else:
                 loss = ceriterion(output, target)
-            # print(cs("(#r) [val]_{}: loss: {}\t output: {}\t label: {}".format(each_iter, loss.data, output.data, target)))
 
             loss_val_meter.add(loss.item())
             # print(target.unsqueeze(0).size(), output.size())

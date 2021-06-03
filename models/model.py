@@ -55,17 +55,31 @@ class Attention_Net_Gated(nn.Module):
 
 
 class ABMIL(nn.Module):
-    def __init__(self, encoder_name='mobilenetv2_10', gate=False, dropout=False, k_sample=10, n_classes=2, instance_loss_fn=None):
+    def __init__(self, encoder_name='mobilenetv2', pretrained=False, split_index_list=None, gate=False, dropout=False,
+                 k_sample=10, n_classes=2, instance_loss_fn=None):
+        """
+        Attention-Based-MIL Model
+        :param encoder_name: Type of encoder (used to extract features)
+        :param pretrained: Whether to use pre-trained model in the encoder
+        :param split_index_list: Model split index (Decide whether to use model parallelism)
+        :param gate: Whether to use Gated Attention
+        :param dropout: Whether to use dropout layer
+        :param k_sample: Number of samples
+        :param n_classes: Number of classes
+        :param instance_loss_fn:  Instance-level loss function
+        """
+
         super(ABMIL, self).__init__()
         self.encoder_name = encoder_name
-        self.encoder = Backbone.model_zoo[self.encoder_name]
+        self.encoder = Backbone.model_zoo[self.encoder_name](pretrained=pretrained, split_index_list=split_index_list)
 
         self.fc_params = [1280, 512, 256]
         fc = [nn.Linear(self.fc_params[0], self.fc_params[1]), nn.ReLU()]
         if gate:
             attention_net = Attention_Net_Gated(L=self.fc_params[1], D=self.fc_params[2], dropout=dropout, n_classes=1)
         else:
-            attention_net = Attention_Net(fc_input_dims=self.fc_params[1], fc_mid_dims=self.fc_params[2], dropout=dropout, n_classes=1)
+            attention_net = Attention_Net(fc_input_dims=self.fc_params[1], fc_mid_dims=self.fc_params[2],
+                                          dropout=dropout, n_classes=1)
         fc.append(attention_net)
         self.attention_net = nn.Sequential(*fc)
         self.classifier = nn.Linear(self.fc_params[1], n_classes)
@@ -76,20 +90,14 @@ class ABMIL(nn.Module):
         if self.instance_loss_fn is not None:  # 只考虑二分类 pos or neg
             self.instance_classifiers = nn.Linear(self.fc_params[1], 2)
 
-    def relocate(self, model_parallel=False):
+    def relocate(self):
+        self.encoder.relocate()
         device_nums = torch.cuda.device_count()
-        if model_parallel and device_nums >= 2:  # 采用模型并行
-            self.encoder.relocate()
-            self.attention_net.to("cuda:{}".format(device_nums - 1))  # 放到最后一个
-            self.classifier.to("cuda:{}".format(device_nums - 1))
-            if self.instance_classifiers is not None:
-                self.instance_classifiers.to("cuda:{}".format(device_nums - 1))
-        else:  # 暂时只支持batch_size = 1
-            self.encoder.cuda()
-            self.attention_net.cuda()
-            self.classifier.cuda()
-            if self.instance_classifiers is not None:
-                self.instance_classifiers.cuda()
+        print(device_nums - 1)
+        self.attention_net.to("cuda:{}".format(device_nums - 1))  # 放到最后一个
+        self.classifier.to("cuda:{}".format(device_nums - 1))
+        if self.instance_classifiers is not None:
+            self.instance_classifiers.to("cuda:{}".format(device_nums - 1))
 
     @staticmethod
     def create_positive_targets(length, device):
@@ -99,7 +107,7 @@ class ABMIL(nn.Module):
     def create_negative_targets(length, device):
         return torch.full((length,), 0, device=device).long()
 
-    def instance_eval(self, A, h, classifier, k_sample, is_pos=True):
+    def instance_eval_bilateral(self, A, h, classifier, k_sample, is_pos=True):
         device = h.device
         if len(A.shape) == 1:
             A = A.view(1, -1)
@@ -107,7 +115,6 @@ class ABMIL(nn.Module):
         topk_p = torch.index_select(h, dim=0, index=topk_p_ids)
         topk_n_ids = torch.topk(-A, k_sample)[1][-1] # 挑出后K个instance
         topk_n = torch.index_select(h, dim=0, index=topk_n_ids)
-        # print(is_pos, k_sample)
         if is_pos:
             p_targets = self.create_positive_targets(k_sample, device)
             n_targets = self.create_negative_targets(k_sample, device)
@@ -123,40 +130,45 @@ class ABMIL(nn.Module):
         instance_loss = self.instance_loss_fn(logits, all_targets)
         return instance_loss, all_preds, all_targets
 
-    def instance_eval_high_attend(self, A, h, classifier, k_sample, is_pos=True):
+    def instance_eval_unilateral(self, A, h, classifier, k_sample, is_pos=True):
+        # Only consider the top k instances
         device = h.device
         if len(A.shape) == 1:
             A = A.view(1, -1)
         topk_p_ids = torch.topk(A, k_sample)[1][-1]
         topk_p = torch.index_select(h, dim=0, index=topk_p_ids)
-        p_targets = self.create_positive_targets(k_sample, device) if is_pos else \
-                    self.create_negative_targets(k_sample, device)
+        p_targets = self.create_positive_targets(k_sample, device) if is_pos else self.create_negative_targets(k_sample,
+                                                                                                               device)
         logits = classifier(topk_p)
         p_preds = torch.topk(logits, 1, dim=1)[1].squeeze(1)
         instance_loss = self.instance_loss_fn(logits, p_targets)
         return instance_loss, p_preds, p_targets
 
-    def forward(self, x, label=None, instance_eval=False, instance_eval_high_attend=False, inference_only=False):
+    def forward(self, x, label=None, instance_eval_bilateral=False, instance_eval_unilateral=False, inference_only=False):
         h = self.encoder(x)
         weights, h = self.attention_net(h)    # N * 1
         weights = torch.transpose(weights, 1, 0)   # 1 * N
 
         att_weights = weights
         weights = F.softmax(weights, dim=1)
-        assert not(instance_eval and instance_eval_high_attend), print("The two options must be mutually exclusive")
+        assert not (instance_eval_bilateral and instance_eval_unilateral), print(
+            "The two options must be mutually exclusive")
         instance_loss = 0
         all_preds = []
         all_targets = []
-        if instance_eval:
-            # print(self.k_sample)
-            instance_loss, all_preds, all_targets = self.instance_eval(weights, h, self.instance_classifiers,
-                                                                       self.k_sample if label == 1 else 4*self.k_sample, is_pos=(label == 1))
+        if instance_eval_bilateral:
+            # print("instance_eval_bilateral: \tlabel:{}\t nums:{}".format(label, self.k_sample if label == 1 else 4 * self.k_sample))
+            instance_loss, all_preds, all_targets = self.instance_eval_bilateral(weights, h, self.instance_classifiers,
+                                                                       self.k_sample if label == 1 else 4 * self.k_sample,
+                                                                       is_pos=(label == 1))
             all_preds = all_preds.cpu().numpy()
             all_targets = all_targets.cpu().numpy()
 
-        if instance_eval_high_attend:
-            instance_loss, all_preds, all_targets = self.instance_eval_high_attend \
-                (weights, h, self.instance_classifiers, self.k_sample, is_pos=(label == 1))
+        if instance_eval_unilateral:
+            # print("instance_eval_unilateral: \tlabel:{}\t nums:{}".format(label, self.k_sample if label == 1 else 4 * self.k_sample))
+            instance_loss, all_preds, all_targets = self.instance_eval_unilateral(weights, h,
+                                                                                   self.instance_classifiers,
+                                                                                   self.k_sample, is_pos=(label == 1))
             all_preds = all_preds.cpu().numpy()
             all_targets = all_targets.cpu().numpy()
 
@@ -173,12 +185,9 @@ class ABMIL(nn.Module):
             infer_results["probs"] = all_porbs
             return logits, infer_results
 
-        if instance_eval or instance_eval_high_attend:
-            instance_results = {'instance_loss': instance_loss, 'inst_labels': np.array(all_targets),
-                            'inst_preds': np.array(all_preds)}
-        else:
-            instance_results = {}
-
+        instance_results = {'instance_loss': instance_loss, 'inst_labels': np.array(all_targets),
+                            'inst_preds': np.array(all_preds)} if (
+                    instance_eval_bilateral or instance_eval_unilateral) else {}
         return logits, Y_hat, Y_prob, instance_results, att_weights
 
 
@@ -201,10 +210,10 @@ def train(model):
 
 
 if __name__ == '__main__':
-    os.environ['CUDA_VISIBLE_DEVICES'] = '2'     # 单GPU
+    os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3'     # 单GPU
     # model = ABMIL(fc_input_dims=2048).cuda()
-    model = ABMIL(instance_loss_fn=nn.CrossEntropyLoss())
-    model.relocate(model_parallel=False)
+    model = ABMIL(instance_loss_fn=nn.CrossEntropyLoss(), split_index_list=[3, 7])
+    model.relocate()
     num_epochs = 10
     for each_epoch in range(num_epochs):
         train(model)
