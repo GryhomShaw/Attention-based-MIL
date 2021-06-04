@@ -58,14 +58,14 @@ def train():
 
         model.relocate()
 
-    if args.checkpoint is not None:
-        with procedure("Load param") as p:
-            ckpt = torch.load(args.checkpoint)
-            params = {"encoder."+k: v for k, v in ckpt['state_dict'].items()}
-
-            state_dict = model.state_dict()
-            state_dict.update(params)
-            model.load_state_dict(state_dict)
+    # if args.checkpoint is not None:
+    #     with procedure("Load param") as p:
+    #         ckpt = torch.load(args.checkpoint)
+    #         params = {"encoder."+k: v for k, v in ckpt['state_dict'].items()}
+    #
+    #         state_dict = model.state_dict()
+    #         state_dict.update(params)
+    #         model.load_state_dict(state_dict)
 
     with procedure("Init Loss and optimizer") as p:
         for k, v in model.named_parameters():  # Turn off the bn layer
@@ -96,16 +96,16 @@ def train():
 
     start_epoch = 0
 
-    # if args.checkpoint is not None:
-    #     with procedure("Load Param") as p:
-    #         checkpoint = torch.load(args.checkpoint)
-    #         model.load_state_dict(checkpoint['state_dict'])
-    #         start_epoch = chectpint['epoch']
-    #         optimizer.load_state_dict(checkpoint['optimizer'])
-    #         scheduler.load_state_dict(checkpoint['scheduler'])
-    #         best_acc = checkpoint['best_acc']
-    #         p.add_log(cs("(#y)Load ckpt from {}:\t Epoch: {}\t Lr:{}".format(config.MODEL.CHECKPOINT, start_epoch,
-    #                                                           optimizer.param_groups[0]['lr'])))
+    if args.checkpoint is not None:
+        with procedure("Load Param") as p:
+            checkpoint = torch.load(args.checkpoint)
+            model.load_state_dict(checkpoint['state_dict'])
+            start_epoch = chectpint['epoch']
+            optimizer.load_state_dict(checkpoint['optimizer'])
+            scheduler.load_state_dict(checkpoint['scheduler'])
+            best_acc = checkpoint['best_acc']
+            p.add_log(cs("(#y)Load ckpt from {}:\t Epoch: {}\t Lr:{}".format(config.MODEL.CHECKPOINT, start_epoch,
+                                                              optimizer.param_groups[0]['lr'])))
 
     # 训练结果记录文件的路径
     output_root_dir = os.path.join(args.output, "Attention",

@@ -216,7 +216,7 @@ class MobileNetV2(nn.Module):
                     cache[each_device + 1] = next_x
                 cache[each_device] = None if each_device != 0 else input
 
-    def _forward_mp(self, x: Tensor, split_size = 100) -> Tensor:
+    def _forward_mp(self, x: Tensor, split_size=100) -> Tensor:
         splits = iter(x.split(split_size, dim=0))
         cache = [None for _ in range(self.split_len)]  # Store the value to be calculated for the current device
         cache[0] = next(splits)
@@ -255,6 +255,7 @@ def mobilenet_v2(pretrained: bool = False, progress: bool = True, **kwargs: Any)
     if pretrained:
         state_dict = load_state_dict_from_url(model_urls['mobilenet_v2'],
                                               progress=progress)
+        # state_dict = torch.load('./ckpt/demo_rename.pth')['state_dict']
         if model.split_index_list:
             index_list = [0, *model.split_index_list]
             for k in model.state_dict().keys():

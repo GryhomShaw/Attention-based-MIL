@@ -71,9 +71,11 @@ class ABMIL(nn.Module):
 
         super(ABMIL, self).__init__()
         self.encoder_name = encoder_name
+        print(self.encoder_name)
         self.encoder = Backbone.model_zoo[self.encoder_name](pretrained=pretrained, split_index_list=split_index_list)
 
         self.fc_params = [1280, 512, 256]
+        # self.fc_params = [2048, 1024, 256]
         fc = [nn.Linear(self.fc_params[0], self.fc_params[1]), nn.ReLU()]
         if gate:
             attention_net = Attention_Net_Gated(L=self.fc_params[1], D=self.fc_params[2], dropout=dropout, n_classes=1)
@@ -181,8 +183,8 @@ class ABMIL(nn.Module):
             infer_results = dict()
             infer_results["weights"] = att_weights
             infer_results["features"] = h
-            all_porbs = F.softmax(self.instance_classifiers(h), dim=1)[:, 1]
-            infer_results["probs"] = all_porbs
+            # all_porbs = F.softmax(self.instance_classifiers(h), dim=1)[:, 1]
+            # infer_results["probs"] = all_porbs
             return logits, infer_results
 
         instance_results = {'instance_loss': instance_loss, 'inst_labels': np.array(all_targets),
@@ -210,9 +212,9 @@ def train(model):
 
 
 if __name__ == '__main__':
-    os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3'     # 单GPU
+    os.environ['CUDA_VISIBLE_DEVICES'] = '1,2,3'     # 单GPU
     # model = ABMIL(fc_input_dims=2048).cuda()
-    model = ABMIL(instance_loss_fn=nn.CrossEntropyLoss(), split_index_list=[3, 7])
+    model = ABMIL(encoder_name='resnet50', pretrained=True, instance_loss_fn=nn.CrossEntropyLoss(), split_index_list=[8,])
     model.relocate()
     num_epochs = 10
     for each_epoch in range(num_epochs):

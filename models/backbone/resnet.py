@@ -1,6 +1,7 @@
 import torch
 from torch import Tensor
 import torch.nn as nn
+import numpy as np
 
 from typing import Type, Any, Callable, Union, List, Optional
 try:
@@ -156,9 +157,13 @@ class ResNet(nn.Module):
         groups: int = 1,
         width_per_group: int = 64,
         replace_stride_with_dilation: Optional[List[bool]] = None,
-        norm_layer: Optional[Callable[..., nn.Module]] = None
+        norm_layer: Optional[Callable[..., nn.Module]] = None,
+        split_index_list: Optional[List[int]] = None
     ) -> None:
         super(ResNet, self).__init__()
+        self.layers_idxs = np.cumsum([0,*layers[:-1]])
+        self.split_index_list = split_index_list
+        self.split_len = 0 if split_index_list is None else len(self.split_index_list) + 1
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
         self._norm_layer = norm_layer
@@ -174,20 +179,34 @@ class ResNet(nn.Module):
                              "or a 3-element tuple, got {}".format(replace_stride_with_dilation))
         self.groups = groups
         self.base_width = width_per_group
-        self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3,
+        conv1 = nn.Conv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3,
                                bias=False)
-        self.bn1 = norm_layer(self.inplanes)
-        self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        self.layer1 = self._make_layer(block, 64, layers[0])
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=2,
-                                       dilate=replace_stride_with_dilation[0])
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2,
-                                       dilate=replace_stride_with_dilation[1])
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=2,
-                                       dilate=replace_stride_with_dilation[2])
+        bn1 = norm_layer(self.inplanes)
+        relu = nn.ReLU(inplace=True)
+        maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        features = [conv1, bn1, relu, maxpool]
+        features.extend(self._make_layer(block, 64, layers[0])) # layer1
+        features.extend(self._make_layer(block, 128, layers[1], stride=2,
+                                       dilate=replace_stride_with_dilation[0])) #layer2
+        features.extend(self._make_layer(block, 256, layers[2], stride=2,
+                                       dilate=replace_stride_with_dilation[1])) #layer3
+        features.extend(self._make_layer(block, 512, layers[3], stride=2,
+                                       dilate=replace_stride_with_dilation[2])) # layer4
+
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        print("features length:{}".format(len(features)))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
+
+        if self.split_index_list is None:
+            self.features = nn.Sequential(*features)
+        else:
+            self.features = nn.ModuleList()
+            start_idx = 0
+            for each_idx in self.split_index_list:  # Split the model according to index
+                self.features.append(nn.Sequential(*features[start_idx:each_idx]))
+                start_idx = each_idx
+            self.features.append(nn.Sequential(*features[start_idx:]))
+
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -229,28 +248,53 @@ class ResNet(nn.Module):
                                 base_width=self.base_width, dilation=self.dilation,
                                 norm_layer=norm_layer))
 
-        return nn.Sequential(*layers)
+        return layers
 
     def _forward_impl(self, x: Tensor) -> Tensor:
         # See note [TorchScript super()]
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.maxpool(x)
-
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
-
+        x = self.features(x)
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
-        # x = self.fc(x)
-
+        print(x.size())
         return x
 
-    def forward(self, x: Tensor) -> Tensor:
-        return self._forward_impl(x)
+    def _per_epoch(self, cache, features, input=None):
+        for each_device in range(self.split_len - 1, -1, -1):
+            cur_x = cache[each_device]
+            if cur_x is not None:
+                next_x = self.features[each_device](cur_x).to(torch.device("cuda:{}".format(each_device + 1)))
+                if each_device == self.split_len - 1:
+                    features.append(torch.flatten(self.avgpool(next_x), 1))
+                else:
+                    cache[each_device + 1] = next_x
+                cache[each_device] = None if each_device != 0 else input
+
+    def _forward_mp(self, x: Tensor, split_size=100) -> Tensor:
+        splits = iter(x.split(split_size, dim=0))
+        cache = [None for _ in range(self.split_len)]  # Store the value to be calculated for the current device
+        cache[0] = next(splits)
+        features = []
+        for each_split in splits:
+            self._per_epoch(cache, features, each_split)
+        for _ in range(self.split_len):  # Empty the remaining part of the pipeline
+            self._per_epoch(cache, features, None)
+        return torch.cat(features)
+
+    def forward(self, x: Tensor, split_size=100) -> Tensor:
+        if self.split_index_list is None:
+            return self._forward_impl(x)
+        else:
+            return self._forward_mp(x, split_size)
+
+    def relocate(self):
+        if self.split_index_list is not None:  # model parallel
+            assert torch.cuda.device_count() == self.split_len + 1, print(
+                "The number of equipment cannot meet the model parallelism")
+            for each in range(self.split_len):
+                cur_device_name = "cuda:{}".format(each)
+                self.features[each].to(torch.device(cur_device_name))
+        else:
+            self.features.to(torch.device("cuda:0"))  # Currently unable to support data parallelism
 
 
 def _resnet(
@@ -265,6 +309,31 @@ def _resnet(
     if pretrained:
         state_dict = load_state_dict_from_url(model_urls[arch],
                                               progress=progress)
+
+        for k in list(state_dict.keys()):
+            if 'layer' in k:  # layer1.0.xxx -> features.a.xxx
+                layer_name, idx, *rest = k.split('.')
+                layer_idx = int(layer_name[-1]) - 1   # 0,1,2,3
+                new_idx = model.layers_idxs[layer_idx] + int(idx) + 4
+                new_key = '.'.join(['features', str(new_idx), *rest])
+                state_dict[new_key] = state_dict.pop(k)
+            elif 'conv1' in k:
+                new_key = k.replace('conv1', 'features.0')
+                state_dict[new_key] = state_dict.pop(k)
+            elif 'bn1' in k:
+                new_key = k.replace('bn1', 'features.1')
+                state_dict[new_key] = state_dict.pop(k)
+
+        if model.split_index_list:
+            index_list = [0, *model.split_index_list]
+            for k in model.state_dict().keys():
+                if 'features' in k:
+                    name1, idx1, idx2, *rest = k.split('.')
+                    new_idx = index_list[int(idx1)] + int(idx2)
+                    old_key = '.'.join([name1, str(new_idx), *rest])
+                    if old_key in state_dict.keys():
+                        state_dict[k] = state_dict.pop(old_key)
+
         model.load_state_dict(state_dict)
     return model
 
