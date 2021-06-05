@@ -3,7 +3,8 @@ ckpt/
 heatmap/
 data/
 train_output/
-*.sh
+run_entire_*.sh
+inference_mobilenetv2_05.sh
 2560*
 __pycache__/
 demo*
