@@ -39,7 +39,7 @@
 
       - File naming rules:  sliceName_(x-y-width-height)\_label.jpg (e.g. <u>T2019_108\_(23054-32121-512-512)\_pos.jpg</u> )
 
-  - **Bag generator:**We treat the sample from the slice as a bag, thereby generating  instances for each bag
+  - **Bag generator:**  We treat the sample from the slice as a bag, thereby generating  instances for each bag
 
     - `python cut_img.py -o='../demo_bags' -s=128`
 
@@ -72,11 +72,11 @@
   - **Model parallel training:**
     - We uses a multi-GPU model parallel method to solve the problem of insufficient memory for end-to-end training of the model, and uses a pipeline method to accelerate model training and improve model training efficiency.
     - You can directly run the provided script for training: `./scripts/run_demo_mp.sh`
-    - **Args split_index_list:**The parameter **split_index_list** is used to determine whether to use model parallel training. If it is None, it means not to use; otherwise, it means the index used by the encoder for splitting.The unit of network splitting is bottleneck, see the corresponding file for details (**modes/backbone/mobilenetv2.py** or **modes/backbone/resnet.py** )
+    - **Args split_index_list:** The parameter **split_index_list** is used to determine whether to use model parallel training. If it is None, it means not to use; otherwise, it means the index used by the encoder for splitting.The unit of network splitting is bottleneck, see the corresponding file for details (**modes/backbone/mobilenetv2.py** or **modes/backbone/resnet.py** )
 
 - **Inference：**
 
-  - You can directly run the provided script for inference:  `./scripts/run_demo.sh`
+  -   `./scripts/run_demo.sh`
 
   - **Directory tree:** For each positive sample, the result is composed of the original image, heatmap and ground truth.
 
