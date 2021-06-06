@@ -5,7 +5,7 @@
   - PyTorch=1.4.0
   - Install dependencies:` pip install -r requirements.txt`
 
-- **Data preparation **
+- **Data preparation** 
 
   - A total of 800 TCT cell slices  (500 pos, 300 neg)
 
