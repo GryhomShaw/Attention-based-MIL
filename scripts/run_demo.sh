@@ -4,4 +4,4 @@ project_dir=`cd ${cur_dir} && cd .. && pwd`
 export PYTHONPATH=${project_dir}:$PYTHONPATH
 #echo $PYTHONPATH
 cd $project_dir
-python main_entire.py --gpus=3, -i="./sample_neg_bags/train_vaild_split.json" -o='./train_output' -l 1e-5 -inst_eval_bil 
+python main_entire.py --gpus=3, -m=mobilenetv2 -i="./demo_bags/train_vaild_split.json" -o='./train_output' -l 1e-5  

@@ -95,7 +95,7 @@ class ABMIL(nn.Module):
     def relocate(self):
         self.encoder.relocate()
         device_nums = torch.cuda.device_count()
-        print(device_nums - 1)
+        # print(device_nums - 1)
         self.attention_net.to("cuda:{}".format(device_nums - 1))  # 放到最后一个
         self.classifier.to("cuda:{}".format(device_nums - 1))
         if self.instance_classifiers is not None:

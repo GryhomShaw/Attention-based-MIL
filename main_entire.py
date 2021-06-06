@@ -24,6 +24,7 @@ def get_args():
     parser.add_argument('--output', '-o', type=str, default=None, help="path of output")
     parser.add_argument('--gpus', '-g', type=str, nargs='+', help="device id of GPU")
     parser.add_argument('--optim', '-opt', type=str, default="Adam", help="type of optimizer")
+    parser.add_argument('--model', '-m', type=str, default='mobilenetv2', help="type of encoder")
     parser.add_argument('--lr', '-l', type=float, default=0.001, help="learning rate")
     parser.add_argument('--checkpoint', '-ckpt', type=str, default=None, help="path of checkpoint")
     parser.add_argument("--epoch", "-ep", type=int, default=500, help="max epoch")
@@ -48,24 +49,11 @@ def train():
         "The two options must be mutually exclusive")
     instance_eval = args.instance_eval_bilateral or args.instance_eval_unilateral
     with procedure("Init Model") as p:
-        # model = ABMIL('resnet101', 2048).cuda()
 
-        # model = ABMIL('mobilenetv2_10', 1280).cuda()
-        # model = ModelParallelABMILLight(fc_input_dims=1280, num_classes=2, width_mult=0.5)
-
-        model = ABMIL(encoder_name='mobilenetv2', split_index_list=args.split_index_list, pretrained=True,
+        model = ABMIL(encoder_name=args.model, split_index_list=args.split_index_list, pretrained=True,
                       instance_loss_fn=nn.CrossEntropyLoss() if instance_eval else None, k_sample=args.k_sample)
 
         model.relocate()
-
-    # if args.checkpoint is not None:
-    #     with procedure("Load param") as p:
-    #         ckpt = torch.load(args.checkpoint)
-    #         params = {"encoder."+k: v for k, v in ckpt['state_dict'].items()}
-    #
-    #         state_dict = model.state_dict()
-    #         state_dict.update(params)
-    #         model.load_state_dict(state_dict)
 
     with procedure("Init Loss and optimizer") as p:
         for k, v in model.named_parameters():  # Turn off the bn layer

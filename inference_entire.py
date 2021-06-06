@@ -19,9 +19,12 @@ from ec_tools import colorful_str as cs
 from ec_tools import procedure
 
 
-original_pos_root = './data/img/pos_2560_overlap/'
-original_neg_root = './data/img/neg_2560_overlap/'
-labeled_path = './data/img/pos_2560_labeled/'
+# original_pos_root = './data/img/pos_2560_overlap/'
+# original_neg_root = './data/img/neg_2560_overlap/'
+# labeled_path = './data/img/pos_2560_labeled/'
+original_pos_root = './demo_sample_pos/'
+original_neg_root = './demo_sample_neg/'
+labeled_path = './demo_labeled'
 
 
 def get_args():
@@ -71,7 +74,7 @@ def inf():
                 name = name[0]
                 original_img_path, img_name = parser_original_img_path(name, label)
                 labeled_img_path = parser_gt_path(img_name) if label == 1 else None
-                heat_img = heatmap(original_img_path, args.size, weights, args.size // 2)
+                heat_img = heatmap(original_img_path, args.size, weights, args.size)
 
                 output_path = os.path.join(args.output, "pos" if label == 1 else "neg")
                 os.makedirs(output_path, exist_ok=True)
@@ -92,7 +95,7 @@ def inf():
 
 def parser_original_img_path(name, label):
     slide_name = '_'.join(name.split('_')[:2])
-    img_name = "{}_roi.jpg".format(name) if label == 1 else "{}.jpg".format(name)
+    img_name = "{}_pos.jpg".format(name) if label == 1 else "{}_neg.jpg".format(name)
     img_path = os.path.join(original_pos_root, "images", slide_name, img_name) if label == 1 else \
         os.path.join(original_neg_root, "images", slide_name, img_name)
     return img_path, img_name
