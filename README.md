@@ -1,4 +1,4 @@
-- ![image](https://github.com/GryhomShaw/Attention-based-MIL/blob/master/Architecture.jpg)
+![image](https://github.com/GryhomShaw/Attention-based-MIL/blob/master/Architecture.jpg)
 
 - **Install:**
 
@@ -76,7 +76,7 @@
 
 - **Inference：**
 
-  -   `./scripts/run_demo.sh`
+  -   `./scripts/inf_demo.sh`
 
   - **Directory tree:** For each positive sample, the result is composed of the original image, heatmap and ground truth.
 

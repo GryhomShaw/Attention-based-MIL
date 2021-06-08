@@ -9,7 +9,6 @@ docopt==0.6.2
 easydict==1.9
 ec-tools==0.9
 eic-utils==3.2
--e git+https://github.com/jwyang/faster-rcnn.pytorch.git@6f0c63b64dde6dc4eb3e24f90650d789f96f4c75#egg=faster_rcnn&subdirectory=lib
 idna==2.8
 imageio==2.5.0
 imgaug==0.2.8
