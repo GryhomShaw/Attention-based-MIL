@@ -23,7 +23,7 @@
     - **Sample Neg:** For class balance, sample the same number of samples from negative slices
 
       - `python sample_neg.py -o='your output path' -t=180 -s=512`
-      - **Args t**: sampleing times for each slice
+      - **Args t**: sampling times for each slice
 
     - **Directory tree:** For both positive and negative samples, the same directory structure as the COCO dataset is used
 
